@@ -1,0 +1,733 @@
+#!/usr/bin/env perl
+
+=head1 NAME
+
+  pollnodes - collect, send, and summarize node information periodically
+
+=head1 SYNOPSIS
+
+  sudo pollnodes [-c center_host] [-h] [-l data_path] [-o] \
+                 [-p localhost_port] [-q httpd_scp_port] \
+                 [-r] [-s seconds] [-t httpd_target] [-v]
+
+=head1 USAGE
+
+  $ sudo pollnodes -h
+  $ sudo getenforce	# SELinux should be disabled or permissive
+  $ sudo mkdir /var/pollnodes
+  $ sudo chmod go+rx /var/pollnodes/
+  $ sudo chown root:root /usr/local/bin/pollnodes
+  $ sudo ssh -l root griffith	# login the center host without passwd
+  $ sudo systemctl enable pollnodes	# daemon
+  $ sudo systemctl start pollnodes
+  $ sudo systemctl status pollnodes
+  $ sudo cat /etc/systemd/system/pollnodes.service
+  [Unit]
+  Description = collect and send node information periodically
+  After = network.target
+  [Service]
+  ExecStart = /usr/local/bin/pollnodes -c 10.11.12.13 \
+                     -l /net/pollnodes -s 512
+  Restart = always
+  RestartSec = 16
+  Type = simple
+  StandardOutput = syslog
+  StandardError = syslog
+  [Install]
+  WantedBy = multi-user.target
+
+=head1 DESCRIPTION
+
+  This Perl script collects, sends, and summarize node information
+  periodically.
+  Unlike the name, pollnodes,
+  this does not poll each node, but collects sent data form each node.
+  If systemd cannot be used, employ /etc/rc.d/rc.local or something.
+  Execute it with option -r if the node deletes old files and directories.
+  This does not allow situation in which several nodes have identical
+  host names.
+
+=head1 PRIVATE
+
+  The node chase, which reports on GPFS, is processed by cu02.
+
+=head1 OPTIONS
+
+  -c  Center host name or IP address (mandatory, e.g. 10.11.12.13)
+  -h  Print usage
+  -l  Data path at center host (mandatory, e.g. /net/pollnodes)
+  -o  Let this script know that it is the center host
+  -p  Port number for localhost
+  -q  Port number for scp to httpd
+  -r  Allow to execute rm
+  -s  Sleeping time in second
+  -t  Target of httpd, e.g. 'carol\@10.11.1.80:/var/www/html/pollnodes/'
+  -v  Print the version of this script
+
+=head1 AUTHOR
+
+  Coded by Kohji OKAMURA, Ph.D.
+
+=head1 HISTORY
+
+  2015-05-27 start coding from scratch
+  2015-05-28 bug fix format of ls -lu /home/$user/
+  2015-05-29 add seven, jack, tigress, sow, hedgehog, and ewe
+  2015-06-03 support file names which contains spaces
+  2015-06-04 change the header of the HTML table
+  2015-06-05 consider HUS1 and HUS2 on au34
+  2015-06-08 consider /home/work on sow
+  2015-08-11 change file colours
+  2015-09-16 remove the URL for refresh
+  2015-10-27 add option -s to hostname
+  2016-03-16 remove exceptional process for sow
+  2016-03-19 print data in blackbear:/home/kumamon/
+  2016-04-14 delete node figure
+  2016-04-22 support when /home partition does not exit
+  2016-04-26 add dragen as au42
+  2016-05-11 support /staging partition on dragen
+  2016-06-08 support /mnt/dnmt?? on hedgehog
+  2016-08-23 support /home/taiban/samba/dnmt?? on hedgehog
+  2016-11-07 add seaurchin as au43
+  2016-12-06 does not print unnecessary file names on seaurchin
+  2016-12-16 merged several diverged versions
+  2017-03-09 support openSUSE; does not print public_html and others
+  2019-04-05 rename check_nodes and others to pollnodes
+  2019-04-08 write obtained information onto /var/pollnodes/
+  2019-04-09 include scp to griffith
+  2019-04-12 released without prepare_html()
+  2019-04-13 bug fix regarding getting storage statistics
+  2019-04-14 option -p for port number of localhost scp
+  2019-04-15 users administrator or others excluded
+  2019-04-16 sleeping times, $SLEEP0, $SLEEP1, $SLEEP2, and $SLEEP3
+  2019-04-17 implemented with prepare_html()
+  2019-04-18 scp HTML5 to WWW server
+  2019-04-22 implemented with options -q and -t to specify WWW
+  2019-04-23 make options -c and -l mandatory
+  2019-04-27 option -v for PollNodes ver. 2.0
+  2019-04-28 ver. 2.1, option -o for the center host
+
+=cut
+
+
+use warnings;
+use strict;
+use English;
+use Getopt::Std;
+use Time::Local;
+
+my $version = '2.1';	# version of this script
+my $SLEEP0 =   256;	# initail
+my $SLEEP1 =   128;	# interval
+my $SLEEP2 =     4;	# before scp
+my $SLEEP3 = 86400;	# seconds in a day
+my $MONTH1 =    36;	# days in a month
+my $MONTH4 =   128;	# days in four months
+
+my %opts;
+my %months = ( Jan => 1, Feb => 2, Mar => 3, Apr => 4, May => 5, Jun => 6,
+             Jul => 7, Aug => 8, Sep => 9, Oct => 10, Nov => 11, Dec => 12);
+my (%status, %alias, %linux);
+my (%memory, %raid, %storage, %used, %load, %run, %last, %check, %files);
+my @files;
+my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
+                 au06 au07 au08 au09 au10 au11 au12 au13 au14 au15 au16 au17
+                 au18 au19 au20 au21 au22 au23 au24 au25 au26 au27 au28 au29
+                 au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
+                 kai chipmunk dragen r820 tapir ewe galago rema capybara
+                 lemur pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
+                 urvogel porcus /;	# names of target hosts
+my ($node, $linux, $memory, $raid, $storage, $used, $run, $load, $last);
+my $files;
+my $scpport = '';
+my $old;
+my $now = time;
+
+getopts 'c:hl:op:q:rs:t:v', \%opts;
+if (defined $opts{v})
+{ print 'PollNodes ver. ', $version, ' (', $0, ")\n"; exit(0) }
+unless (defined $opts{c})
+            { die "Error 60: option -c is requird, " .  "e.g. -c 10.11.12.13" }
+if (defined $opts{h})                                     { exec "perldoc $0" }
+unless (defined $opts{l})
+          { die "Error 62: option -l is requird, " . "e.g. -l /net/pollnodes" }
+if (defined $opts{p}) { $opts{p} = "-P $opts{p}" } else { $opts{p} = '' }
+if (defined $opts{q}) { $scpport = "-P $opts{q}" }
+if (defined $opts{s}) { $SLEEP1 = $opts{s} }
+
+sleep $SLEEP0;	# wait for a while
+
+## host names
+$node = lc `hostname -s`;
+chomp $node;
+if    ($node eq 'au01') { $node = 'griffith' }
+elsif ($node eq 'au02') { $node = 'avery' }
+elsif ($node eq 'cu02') { $node = 'chase' }
+
+## Linux distribution name and version
+$linux = `cat /etc/redhat-release 2> /dev/null`;
+if ($linux eq "Red Hat Enterprise Linux Server release 6.2 (Santiago)\n")
+{ $linux = 'RHEL 6.2' }
+elsif ($linux eq "Red Hat Enterprise Linux Server release 6.3 (Santiago)\n")
+{ $linux = 'RHEL 6.3' }
+elsif ($linux eq "Red Hat Enterprise Linux Server release 7.5 (Maipo)\n")
+{ $linux = 'RHEL 7.5' }
+elsif ($linux =~ m/^(CentOS ).+ (\d+\.\d+)[\. ]/) { $linux = "$1$2" }
+elsif ($linux =~ m/^(Fedora )release (\d+) /) { $linux = "$1$2" }
+elsif ($linux eq '')
+{
+  $linux = `cat /etc/lsb-release 2> /dev/null`;
+  if ($linux =~ m/DISTRIB_DESCRIPTION="(\w+ \d+\.\d+)\./)
+  { $linux = $1 }
+  else
+  {
+    $linux = `cat /etc/os-release 2> /dev/null`;
+    if ($linux =~ m/NAME="(\w+)\s.+VERSION="(\d+)/s)
+    { $linux = "$1 $2" }
+  }
+}
+else { $linux = 'Unknown' }
+
+## RAID (hard coding)
+$raid = '-';
+if ($node eq 'griffith')      { $raid = 5 }
+elsif ($node eq 'avery')      { $raid = 5 }
+elsif ($node eq 'chase')      { $raid = 6 }
+elsif ($node =~ m/^au(\d\d)$/)
+{
+  $raid = 5;
+  if (17 < $1 and $1 < 23)    { $raid = 0 }
+  elsif (33 < $1)             { $raid = 1 }
+  if ($1 == 34)               { $raid = 6 }
+}
+elsif ($node eq 'seaurchin')  { $raid = 5 }
+elsif ($node eq 'tigress')    { $raid = 5 }
+elsif ($node eq 'sow')        { $raid = 5 }
+elsif ($node eq 'r820')       { $raid = 5 }
+elsif ($node eq 'ewe')        { $raid = 5 }
+elsif ($node eq 'blackbear')  { $raid = 6 }
+elsif ($node eq 'kai')        { $raid = 5 }
+elsif ($node eq 'chipmunk')   { $raid = 5 }
+elsif ($node eq 'galago')     { $raid = 5 }
+elsif ($node eq 'tapir')      { $raid = 5 }
+elsif ($node eq 'dragen')     { $raid = 0 }
+elsif ($node eq 'urvogel')    { $raid = 1 }
+elsif ($node eq 'porcus')     { $raid = 1 }
+elsif ($node eq 'chase')      { $raid = 6 }
+elsif ($node =~ m/^pt0(\d)$/) { $raid = 5 }
+# elsif ($node eq 'hedgehog')  { $raid = '-' }
+# elsif ($node eq 'jellyfish') { $raid = 'deg' }
+# elsif ($node eq 'seven')     { $raid = '?' }
+
+## memory size in GiB
+$memory = `head -n 1 /proc/meminfo`;
+if ($memory =~ m/\s(\d+)\s/) { $memory = $1 }
+else                         { $memory = 0 }
+$memory /= (1024 * 1024);	# GiB
+$memory = sprintf "%.1f GiB", $memory;
+
+## pollnodes.service by the following infinite loop
+for (my $i = 0; $i < $SLEEP3; $i++)
+{
+  &summary_node();
+  if ($i > $SLEEP3 / ($SLEEP1 + $SLEEP2))
+  {
+    if ($node eq 'griffith' or $node eq 'avery' or $node eq 'chase' or
+        $node =~ m/^au\d\d$/ or $node =~ m/^pt\d\d$/)
+    { if (defined($opts{r})) { &delete_old_files() } }
+    $i = -1;
+  }
+  sleep $SLEEP1;
+  if (defined $opts{o})	# if running on the center host
+  {
+    &prepare_html();
+    sleep $SLEEP2;
+    if (defined $opts{t}) { `scp -p $scpport $opts{l}/index.html $opts{t}` }
+  }
+}
+exit;
+
+
+sub prepare_html()
+{
+  my %operations;
+  my ($ping, $status, $percent, $datetime);
+
+  foreach my $node (@nodes)
+  {
+    $status = `cat "$opts{l}/pollnodes_${node}.tsv"`;
+    if ($status =~ m/^${node}\t/)
+    {
+      if ($POSTMATCH =~
+        m/([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t\n]+)\n/)
+      {
+        $linux{$node}   = $1; $memory{$node} = $2; $raid{$node}  = $3;
+        $storage{$node} = $4; $used{$node}   = $5; $load{$node}  = $6;
+        $run{$node}     = $7; $last{$node}   = $8; $check{$node} = $9;
+        $files{$node}   = $POSTMATCH
+      }
+      else                               { warn "Error 74: $node\t$POSTMATCH" }
+    }
+    else                                             { warn "Error 72: $node" }
+
+    $ping = `ping -c 1 $node 2> /dev/null`;
+    if ($ping =~ m/ transmitted, 1 received, /m) { $operations{$node} = 1 }
+    else                                         { $operations{$node} = 0 }
+    if ($node eq 'r820')                         { $operations{$node} = 1 }
+
+    $alias{$node} = $node;
+    if ($operations{$node} == 0)
+    {
+      $alias{$node} = "<span class=\"grey\">$node</span>";
+      $load{$node}  = "<span class=\"grey\">0</span>";
+      $run{$node}   = "<span class=\"grey\">Off</span>";
+    }
+    elsif ($load{$node} < 1.0) { ; }
+    elsif ($load{$node} < 2.0) { $load{$node} = "<span class=\"green\">$load{$node}</span>" }
+    elsif ($load{$node} < 4.0) { $load{$node} = "<span class=\"blue\">$load{$node}</span>" }
+    elsif ($load{$node} < 8.0) { $load{$node} = "<span class=\"violet\">$load{$node}</span>" }
+    else                { $load{$node} = "<span class=\"red\">$load{$node}</span>" }
+
+    if ($used{$node} =~ m/^(\d+)%$/)
+    {
+      $percent = $1;
+      if    ($percent < 20) { ; }
+      elsif ($percent < 40) { $used{$node} = "<span class=\"green\">$used{$node}</span>" }
+      elsif ($percent < 60) { $used{$node} = "<span class=\"blue\">$used{$node}</span>" }
+      elsif ($percent < 80) { $used{$node} = "<span class=\"violet\">$used{$node}</span>" }
+      else                  { $used{$node} = "<span class=\"red\">$used{$node}</span>" }
+    }
+
+    if ($run{$node} =~ m/Off/) { ; }
+    elsif ($run{$node} == 1) { $run{$node} .= ' day' }
+    else                     { $run{$node} .= ' days' }
+  }
+
+  open HTML, "> $opts{l}/index.html"            or die "$OS_ERROR: index.html";
+  print HTML "<!DOCTYPE html>\n\n";
+  print HTML "<html lang=\"ja\">\n\n";
+  print HTML "<head>\n";
+  print HTML "  <meta charset=\"UTF-8\">\n";
+  print HTML "  <meta name=\"description\"",
+               " content=\"Status of Linux servers at NRICHD\">\n";
+  print HTML "  <meta name=\"keywords\" ",
+                "content=\"Linux, server, NGS, pollnodes\">\n";
+  print HTML "  <meta name=\"author\" content=\"Kohji OKAMURA, Ph.D.\">\n";
+  print HTML "  <meta name=\"viewport\" content=\"width=device-width\">\n";
+  print HTML "  <meta http-equiv=\"refresh\" content=\"", $SLEEP1, "\">\n";
+  print HTML "  <style>\n";
+  print HTML "    .green     { color: #008800; }\n";
+  print HTML "    .blue      { color: #4444ff; }\n";
+  print HTML "    .violet    { color: #9400d3; }\n";
+  print HTML "    .grey      { color: #888888; }\n";
+  print HTML "    .slategray { color: #708090; }\n";
+  print HTML "    .purple    { color: #800080; }\n";
+  print HTML "    .red       { color: #ff0000; }\n";
+  print HTML "    .big   { font-size: 125%; }\n";
+  print HTML "    .small { font-size: 75%; }\n";
+  print HTML "    .sup   { font-size: 75%; vertical-align: 40%; }\n";
+  print HTML "    .sub   { font-size: 75%; vertical-align: -25%; }\n";
+  print HTML "    .tt    { font-family: monospace; }\n";
+  print HTML "    .big   { font-size: 125%; }\n";
+  print HTML "    .small { font-size: 75%; }\n";
+  print HTML "    .sup   { font-size: 75%; vertical-align: 40%; }\n";
+  print HTML "    .sub   { font-size: 75%; vertical-align: -25%; }\n";
+  print HTML "    .tt    { font-family: monospace; }\n";
+  print HTML "    a img  { border: none; }\n";
+  print HTML "    table  { border-collapse: separate; border-spacing: 2px; }\n";
+  print HTML "    th,td  { padding: 2px 20px; }\n";
+  print HTML "    th     { background-color: #384ab0; color: #f4f5f6; ",
+                          "font-weight: normal; }\n";
+  print HTML "    td     { background-color: #d8e2ff; }\n";
+  print HTML "  </style>\n";
+  print HTML "  <title>Status of Linux servers at NRICHD</title>\n";
+  print HTML "</head>\n";
+  print HTML "<body style=\"color: #000000; background-color: #ffffff\">\n";
+  print HTML "<br>\n",
+             "<b><span class=\"big\"><span class=\"big\"><span class=\"blue\">",
+             "Status of Linux servers at NRICHD",
+             "</span></span></span></b><br>\n<br>\n\n";
+
+  while (my $message = </var/notice/Notice_*.txt>)
+  {	# print existing messages in the directory
+    $message = `cat $message`;
+    print HTML "&nbsp; &bull; &nbsp; ${message}<br>\n";
+  }
+  print HTML "<br>\n\n";
+
+  print HTML "<br>\n<b><span class=\"big\">HA8000 cluster</span></b><br>\n";
+  print HTML "<table>\n";
+  print HTML "  <tr><th rowspan=\"2\">Node</th><th>Linux</th><th>Memory</th>",
+               "<th>RAID</th><th>Storage</th><th>Used</th><th>Load</th>",
+               "<th>Running</th><th>Login</th><th>Check</th></tr>\n",
+          "<tr><th colspan=\"9\">Files and directories with access date</th>",
+          "</tr>\n";
+
+  foreach my $host (qw/ griffith avery au03 au04 au05 au06 au07 au08 au09
+    au10 au11 au12 au13 au14 au15 au16 au17 au18 au19 au20 au21 au22 au23
+    au24 au25 au26 au27 au28 au29 au30 au31 au32 au33 au34 au35 /)
+  {
+    print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
+          "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
+          "<td>$run{$host}</td><td>$last{$host}</td><td>$check{$host}</td></tr>\n";
+    print HTML "<tr><td colspan=\"9\">";
+
+    @files = split /\n/, $files{$host};
+    foreach my $file (@files)
+    {
+      if (($host eq 'griffith' or $host eq 'avery' or $host =~ m/^au\d\d$/)
+          and $file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 16)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 8)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 4)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      elsif ($file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32 * 4)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 3)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 2)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 1)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      else                           { warn "Error 64: $files{$host} ($host)" }
+    }
+    print HTML "</td></tr>\n\n";
+  }
+  print HTML "</table>\n";
+  print HTML "各ノードに1ヶ月以上放置されているディレクトリやファイルは自動的に削除されます。<br>\n";
+  print HTML "共有ディスク(au34)に4ヶ月以上放置されているディレクトリやファイルは自動的に削除されます。<br>\n";
+  print HTML "<br>\n\n";
+
+  print HTML "<br>\n<b><span class=\"big\">DL360 cluster</span></b><br>\n";
+  print HTML "<table>\n";
+  print HTML "  <tr><th rowspan=\"2\">Node</th><th>Linux</th><th>Memory</th>",
+               "<th>RAID</th><th>Storage</th><th>Used</th><th>Load</th>",
+               "<th>Running</th><th>Login</th><th>Check</th></tr>\n",
+          "<tr><th colspan=\"9\">Files and directories with access date</th>",
+          "</tr>\n";
+
+  foreach my $host (qw/ pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase /)
+  {
+    print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
+          "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
+          "<td>$run{$host}</td><td>$last{$host}</td><td>$check{$host}</td></tr>\n";
+    print HTML "<tr><td colspan=\"9\">";
+
+    @files = split /\n/, $files{$host};
+    foreach my $file (@files)
+    {
+      if (($host =~ m/^pt\d\d$/) and $file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 16)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 8)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 4)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      elsif ($file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32 * 4)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 3)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 2)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 1)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      else                           { warn "Error 66: $files{$host} ($host)" }
+    }
+    print HTML "</td></tr>\n\n";
+  }
+  print HTML "</table>\n";
+  print HTML "各ノードに1ヶ月以上放置されているディレクトリやファイルは自動的に削除されます。<br>\n";
+  print HTML "共有ディスク(chase)に4ヶ月以上放置されているディレクトリやファイルは自動的に削除されます。<br>\n";
+  print HTML "<br>\n\n";
+
+  print HTML "<br>\n<b><span class=\"big\">Storage servers</span></b><br>\n";
+  print HTML "<table>\n";
+  print HTML "  <tr><th rowspan=\"2\">Node</th><th>Linux</th><th>Memory</th>",
+               "<th>RAID</th><th>Storage</th><th>Used</th><th>Load</th>",
+               "<th>Running</th><th>Login</th><th>Check</th></tr>\n",
+          "<tr><th colspan=\"9\">Files and directories with access date</th>",
+          "</tr>\n";
+
+  foreach my $host (qw/ hedgehog blackbear kai chipmunk /)
+  {
+    print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
+          "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
+          "<td>$run{$host}</td><td>$last{$host}</td><td>$check{$host}</td></tr>\n";
+    print HTML "<tr><td colspan=\"9\">";
+
+    @files = split /\n/, $files{$host};
+    foreach my $file (@files)
+    {
+      if ($file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32 * 4)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 3)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 2)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 1)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      else                           { warn "Error 68: $files{$host} ($host)" }
+    }
+    print HTML "</td></tr>\n\n";
+  }
+  print HTML "</table>\n<br>\n\n";
+
+  print HTML "<br>\n<b><span class=\"big\">Other computers</span></b><br>\n";
+  print HTML "<table>\n";
+  print HTML "  <tr><th rowspan=\"2\">Node</th><th>Linux</th><th>Memory</th>",
+               "<th>RAID</th><th>Storage</th><th>Used</th><th>Load</th>",
+               "<th>Running</th><th>Login</th><th>Check</th></tr>\n",
+          "<tr><th colspan=\"9\">Files and directories with access date</th>",
+          "</tr>\n";
+
+  foreach my $host (qw/ seven jellyfish seaurchin tigress sow capybara r820
+                        dragen ewe galago lemur tapir rema urvogel porcus /)
+  {
+    print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
+          "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
+          "<td>$run{$host}</td><td>$last{$host}</td><td>$check{$host}</td></tr>\n";
+    print HTML "<tr><td colspan=\"9\">";
+
+    @files = split /\n/, $files{$host};
+    foreach my $file (@files)
+    {
+      if ($file =~ m/^((20\d\d)-(\d\d)-(\d\d) .+)/)
+      {
+        $old = timelocal(0, 0, 0, $4, $3 - 1, $2);
+        if    ($now - $old > 60 * 60 * 24 * 32 * 4)
+        { $file = "<span class=\"red\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 3)
+        { $file = "<span class=\"violet\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 2)
+        { $file = "<span class=\"blue\">$file</span>" }
+        elsif ($now - $old > 60 * 60 * 24 * 32 * 1)
+        { $file = "<span class=\"green\">$file</span>" }
+        print HTML "${file}<br>";
+      }
+      else                           { warn "Error 70: $files{$host} ($host)" }
+    }
+    print HTML "</td></tr>\n\n";
+  }
+  print HTML "</table>\n\n<p><br></p>\n\n";
+
+  $datetime = `date +"%Y-%m-%d %H:%M"`;
+  chomp $datetime;
+  print HTML "$datetime<br>\n<br>\n";
+  print HTML "</body>\n\n</html>\n";
+  close HTML;
+}
+
+
+sub delete_old_files
+{
+  my @stat;
+  my ($name, $days);
+  while ($name = </home/*/*>)
+  {
+    if ($name =~ m/^\/home\/work\//)       { next }
+    if ($name =~ m/^\/home\/scsk\//)       { next }
+    if ($name =~ m/^\/home\/maint\//)      { next }
+    if ($name =~ m/^\/home\/gcc482\//)     { next }
+    if ($name =~ m/^\/home\/hitachi-se\//) { next }
+    @stat = stat $name;
+    $days = (int ((time - $stat[8]) / 60 / 60 / 24)) + 1;
+    if ($days > $MONTH1) { `rm -fr $name` }
+  }
+  if ($node eq 'au34')
+  {
+    while ($name = </HUS[12]/work/*/*>)
+    {
+      @stat = stat $name;
+      $days = (int ((time - $stat[8]) / 60 / 60 / 24)) + 1;
+      if ($days > $MONTH4) { `rm -fr $name` }
+    }
+  }
+  if ($node eq 'chase')
+  {
+    while ($name = </net/gpfs/home/*/*>)
+    {
+      @stat = stat $name;
+      $days = (int ((time - $stat[8]) / 60 / 60 / 24)) + 1;
+      if ($days > $MONTH4) { `rm -fr $name` }
+    }
+  }
+}
+
+
+sub summary_node
+{
+  $storage = `df -h | grep /home`;
+  if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/home\s/)
+  { $storage = $1; $used = $2 }
+  else
+  {
+    $storage = `df -h | grep '% /'\$`;
+    if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/\s/)
+    { $storage = $1; $used = $2 }
+    else { $storage = $used = 'NA' }
+    my $staging = `df -h | grep /staging`;      # only for dragen
+    if ($staging =~ m/^\S+\s+(\S+)\s.+\s(\d+)\%\s+\/staging\s/)
+    { $storage = $1; $used = $2 }
+  }
+  if ($node eq 'r820')
+  {
+    $storage = `df -h | grep '% /disk1'`;
+    if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/disk1/)
+    { $storage = $1; $used = $2 }
+  }
+  if ($node eq 'au34')
+  {
+    my $hus1 = `df -h | grep /HUS1`;
+    if ($hus1 =~ m/^\S*\s+(\S+)\s.+\s(\d+)\%\s+\/HUS1\s/)
+    { $storage = $1; $hus1 = $2 }
+    my $hus2 = `df -h | grep /HUS2`;
+    if ($hus2 =~ m/^\S*\s+(\S+)\s.+\s(\d+)\%\s+\/HUS2\s/)
+    { $storage = $1; $hus1 = $2 }
+    if ($storage =~ m/\d/ and $hus1 =~ m/\d/ and $hus2 =~ m/\d/)
+    {
+      if ($hus1 <  $hus2) { $used = $hus2 }
+      if ($hus1 >= $hus2) { $used = $hus1 }
+    }
+  }
+  if ($node eq 'chase')
+  {
+    $storage = `df -h | grep '% /net/gpfs'`;
+    if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/net/)
+    { $storage = $1; $used = $2 }
+  }
+  $used .= '%';
+
+  $run = `uptime`;
+  if ($run =~ m/ load average: (\S+), /) { $load = sprintf "%.1f", $1 }
+  else                                   { $load = 'NA' }
+  if ($run =~ m/ up (\d+) day/)          { $run = $1 }
+  else                                   { $run = 1 }
+
+  # $last = `last -F | grep -v -e ^reboot -e ^root`;
+  $last = `last -F | grep -v -e ^reboot`;
+  my ($year, $month, $day);
+  if ($last =~ m/ \w{3} (\w{3}) ([ 123]\d) [\d:]+ (20\d\d) /)
+  {
+    $year = $3;
+    if (exists $months{$1}) { $month = sprintf "%02d", $months{$1} }
+    else                    { $month = 'NA' }
+    $day = sprintf "%02d", $2;
+    $last = "${year}-${month}-${day}";
+  }
+  else                                        { $last = 'NA' }
+
+  my $user = `ls /home`;
+  my @users = split /\s+/, $user;
+  $files = '';
+  foreach $user (@users)
+  {
+    if ($user eq 'gcc482' or $user eq 'work' or $user eq 'hitachi-se' or
+        $user eq 'maint'  or $user eq 'scsk' or $user eq 'administrator' or
+        $user eq 'py27user' or $user eq 'py36user' or $user eq 'user1' or
+        $user eq 'admin')
+    { next }	# ignore
+    my $ls = `ls -luF --time-style=full-iso /home/$user/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g) # should be in JST
+    {
+      if ($2 eq 'Desktop/' or $2 eq 'Documents/') { next }
+      if ($2 eq 'Downloads/' or $2 eq 'Music/') { next }
+      if ($2 eq 'Pictures/' or $2 eq 'Public/') { next }
+      if ($2 eq 'Templates/' or $2 eq 'Videos/') { next }
+      if ($2 eq 'デスクトップ/' or $2 eq 'ドキュメント/') { next }
+      if ($2 eq 'ダウンロード/' or $2 eq 'テンプレート/') { next }
+      if ($2 eq 'ピクチャ/' or $2 eq 'ミュージック/') { next }
+      if ($2 eq 'ビデオ/' or $2 eq '公開/') { next }
+      if ($2 eq '画像/' or $2 eq '音楽/') { next }
+      if ($2 eq 'perl5/' or $2 eq 'R/' or $2 eq 'bin/') { next }
+      if ($2 eq 'public_html/' or $2 eq 'igv/' or $2 eq 'ncbi/') { next }
+      $files .= "$1 $2\n";
+    }
+  }
+  if ($node eq 'au34')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /HUS[12]/work/*/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
+    { $files .= "$1 $2\n" }
+  }
+  if ($node eq 'r820')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /disk1/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
+    { $files .= "$1 $2\n" }
+  }
+  if ($node eq 'dragen')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /staging/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
+    { $files .= "$1 $2\n" }
+  }
+  if ($node eq 'hedgehog')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /home/taiban/samba/dnmt??/ 2> /dev/null`;
+    my @ls = split /\n/, $ls;
+    my $dnmt = '00';
+    foreach (@ls)
+    {
+      if ($ARG =~ m/^\/home\/taiban\/samba\/dnmt(\d\d)\/:/)
+      { $dnmt = $1; next }
+      if ($ARG =~ m/lost\+found/) { next }
+      if ($ARG =~ m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)/)
+      { $files .= "$1 dnmt${dnmt}/$2\n" }
+    }
+  }
+  if ($node eq 'chase')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /net/gpfs/home/*/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
+    { $files .= "$1 $2\n" }
+  }
+
+  open TSV, "> /var/pollnodes/pollnodes_${node}.tsv"
+                                        or die "$OS_ERROR: pollnodes error 68";
+  print TSV "$node\t$linux\t$memory\t$raid\t$storage\t$used\t",
+            "$load\t$run\t$last\t";
+  print TSV `date "+%Y-%m-%d"`;	# without "\n"
+  print TSV "$files";
+  close TSV;
+  sleep $SLEEP2;
+  `scp -p $opts{p} /var/pollnodes/pollnodes_${node}.tsv $opts{c}:$opts{l}/ 2> /dev/null`;
+}
