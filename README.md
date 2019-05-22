@@ -10,7 +10,7 @@ Coded by Kohji OKAMURA, Ph.D.
 --------
 
 ## History
-2019-04-28 ver. 2.1, released via GitHub~
-2019-05-13 ver. 2.4
+2019-04-28 ver. 2.1, released via GitHub  
+2019-05-13 ver. 2.4  
 
 --------
