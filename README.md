@@ -4,6 +4,12 @@ A Perl script, which periodically summarizes Linux server stats and shows them a
 
 --------
 
+## Usage
+
+$ pollnodes -h
+
+--------
+
 ## Author
 
 Coded by Kohji OKAMURA, Ph.D.
