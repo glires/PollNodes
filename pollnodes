@@ -40,13 +40,16 @@
 
   This Perl script collects, sends, and summarize node information
   periodically.
-  Contrary to the name, pollnodes, this does not poll each node,
+  Contrary to the name, pollnodes, it does not poll each node,
   but collects stat data form each node.
-  If systemd cannot be used, employ /etc/rc.d/rc.local or something.
+  If systemd cannot be used, use /etc/rc.d/rc.local or something.
+  For non-interactive scp, host should be added to the list of known hosts.
+  If it accesses localhost, localhost should also be added to the list.
   Execute it with option -r if the node deletes old files and directories.
   Execute it with option -n if file names should not be shown.
   New host names should be added or obsolete host names should be deleted
   in two lines, which are commented by "names of target hosts".
+  RAID level should be hard-written in this script.
   This does not allow situation in which several nodes have identical
   host names.
 
@@ -113,6 +116,13 @@
   2019-06-06 ver. 2.6, limit maximum length of notice
   2019-07-05 ver. 2.7, fix RAID level for some; remove one host
   2019-08-17 ver. 2.8, restrict to print some dir names; comment on GPFS dir
+  2019-10-04 ver. 2.9, remove r820; for non-interactive scp
+  2020-01-01 ver. 3.0, add a new host
+  2020-02-13 ver. 3.1, au17 RAID 0 to 5
+  2020-06-25 ver. 3.2, POD modified
+  2020-08-19 ver. 3.3, remove capybara; add minnie
+  2020-08-25 ver. 3.4, au19 RAID 0 to 5
+  2020-09-23 ver. 3.5, au22 RAID 0 to 5
 
 =cut
 
@@ -124,7 +134,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version = '2.8';	# version of this script
+my $version = '3.5';	# version of this script 2020-08-25
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -143,9 +153,9 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  au06 au07 au08 au09 au10 au11 au12 au13 au14 au15 au16 au17
                  au18 au19 au20 au21 au22 au23 au24 au25 au26 au27 au28 au29
                  au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
-                 kai chipmunk dragen r820 tapir ewe galago capybara lemur
+                 kai chipmunk dragen tapir senglar ewe galago lemur
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
-                 urvogel porcus aladdin snow-white/;	# names of target hosts
+                 urvogel porcus aladdin snow-white minnie /;	# names of target hosts
 my ($node, $linux, $memory, $raid, $storage, $used, $run, $load, $last);
 my $files;
 my $scpport = '';
@@ -207,17 +217,20 @@ elsif ($node =~ m/^au(\d\d)$/)
   if (15 < $1 and $1 < 23)    { $raid = 0 }
   elsif (33 < $1)             { $raid = 1 }
   if ($1 == 34)               { $raid = 6 }
+  if ($1 == 17)               { $raid = 5 }
+  if ($1 == 19)               { $raid = 5 }
+  if ($1 == 22)               { $raid = 5 }
 }
 elsif ($node eq 'seaurchin')  { $raid = 5 }
 elsif ($node eq 'tigress')    { $raid = 5 }
 elsif ($node eq 'sow')        { $raid = 5 }
-elsif ($node eq 'r820')       { $raid = 5 }
 elsif ($node eq 'ewe')        { $raid = 5 }
 elsif ($node eq 'blackbear')  { $raid = 6 }
 elsif ($node eq 'kai')        { $raid = 5 }
 elsif ($node eq 'chipmunk')   { $raid = 5 }
 elsif ($node eq 'galago')     { $raid = 5 }
 elsif ($node eq 'tapir')      { $raid = 5 }
+elsif ($node eq 'senglar')    { $raid = 5 }
 elsif ($node eq 'dragen')     { $raid = 0 }
 elsif ($node eq 'urvogel')    { $raid = 1 }
 elsif ($node eq 'porcus')     { $raid = 1 }
@@ -281,7 +294,6 @@ sub prepare_html()
     $ping = `ping -c 1 $node 2> /dev/null`;
     if ($ping =~ m/ transmitted, 1 received, /m) { $operations{$node} = 1 }
     else                                         { $operations{$node} = 0 }
-    if ($node eq 'r820')                         { $operations{$node} = 1 }
 
     $alias{$node} = $node;
     if ($operations{$node} == 0)
@@ -522,9 +534,9 @@ sub prepare_html()
           "<tr><th colspan=\"9\">Files and directories with access date</th>",
           "</tr>\n";
 
-  foreach my $host (qw/ seven jellyfish seaurchin tigress sow capybara r820
-                        dragen ewe galago lemur tapir urvogel porcus aladdin
-                        snow-white /)	# names of target hosts
+  foreach my $host (qw/ seven jellyfish seaurchin tigress sow
+                        dragen ewe galago lemur tapir senglar urvogel porcus
+                        aladdin snow-white minnie /)	# names of target hosts
   {
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -612,12 +624,6 @@ sub summary_node
     if ($staging =~ m/^\S+\s+(\S+)\s.+\s(\d+)\%\s+\/staging\s/)
     { $storage = $1; $used = $2 }
   }
-  if ($node eq 'r820')
-  {
-    $storage = `df -h | grep '% /disk1'`;
-    if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/disk1/)
-    { $storage = $1; $used = $2 }
-  }
   if ($node eq 'au34')
   {
     my $hus1 = `df -h | grep /HUS1`;
@@ -693,14 +699,6 @@ sub summary_node
   {
     my $ls =
       `ls -luF --time-style=full-iso /HUS[1-3]/work/*/ 2> /dev/null`;
-    while ($ls =~
-      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
-    { $files .= "$1 $2\n" }
-  }
-  if ($node eq 'r820')
-  {
-    my $ls =
-      `ls -luF --time-style=full-iso /disk1/ 2> /dev/null`;
     while ($ls =~
       m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
     { $files .= "$1 $2\n" }
