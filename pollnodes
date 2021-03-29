@@ -12,22 +12,28 @@
 
 =head1 USAGE
 
-  $ sudo pollnodes -h
-  $ sudo getenforce	# SELinux should be disabled or permissive
+  $ sudo mv -i pollnodes /usr/local/bin/
+  $ sudo chown root:root /usr/local/bin/pollnodes
+  $ getenforce	# SELinux Enforcing
+  $ sudo chcon -t bin_t /usr/local/bin/pollnodes	# SELinux
+  $ sudo /usr/local/bin/pollnodes -v
+  $ sudo /usr/local/bin/pollnodes -h
   $ sudo mkdir /var/pollnodes
   $ sudo chmod go+rx /var/pollnodes/
-  $ sudo chown root:root /usr/local/bin/pollnodes
-  $ sudo ssh -l root griffith	# login the center host without passwd
+  $ sudo ssh -l alice 10.11.12.13	# login the center host without passwd
+  $ sudo vi /etc/systemd/system/pollnodes.service
+  $ sudo systemctl daemon-reload
   $ sudo systemctl enable pollnodes	# daemon
+  $ systemctl is-enabled pollnodes
   $ sudo systemctl start pollnodes
-  $ sudo systemctl status pollnodes
+  $ systemctl status pollnodes
   $ sudo cat /etc/systemd/system/pollnodes.service
   [Unit]
   Description = collect and send node information periodically
   After = network.target
   [Service]
   ExecStart = /usr/local/bin/pollnodes -c 10.11.12.13 \
-                     -l /net/pollnodes -s 512
+                  -n -l /net/pollnodes -s 512
   Restart = always
   RestartSec = 16
   Type = simple
@@ -48,7 +54,7 @@
   Execute it with option -r if the node deletes old files and directories.
   Execute it with option -n if file names should not be shown.
   New host names should be added or obsolete host names should be deleted
-  in two lines, which are commented by "names of target hosts".
+  into or from @nodes, which are commented by "names of target hosts".
   RAID level should be hard-written in this script.
   This does not allow situation in which several nodes have identical
   host names.
@@ -123,6 +129,8 @@
   2020-08-19 ver. 3.3, remove capybara; add minnie
   2020-08-25 ver. 3.4, au19 RAID 0 to 5
   2020-09-23 ver. 3.5, au22 RAID 0 to 5
+  2021-03-18 ver. 3.6, work even when SELinux Enforcing
+  2021-03-29 ver. 3.7, simplified when a new host is added
 
 =cut
 
@@ -134,7 +142,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version = '3.5';	# version of this script 2020-08-25
+my $version =  3.7;	# version of this script 2021-03-29
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -155,7 +163,8 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
                  kai chipmunk dragen tapir senglar ewe galago lemur
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
-                 urvogel porcus aladdin snow-white minnie /;	# names of target hosts
+                 urvogel porcus aladdin snow-white
+                 eel /;	# names of target hosts
 my ($node, $linux, $memory, $raid, $storage, $used, $run, $load, $last);
 my $files;
 my $scpport = '';
@@ -235,6 +244,7 @@ elsif ($node eq 'dragen')     { $raid = 0 }
 elsif ($node eq 'urvogel')    { $raid = 1 }
 elsif ($node eq 'porcus')     { $raid = 1 }
 elsif ($node eq 'chase')      { $raid = 6 }
+elsif ($node eq 'aladdin')    { $raid = 5 }
 elsif ($node =~ m/^pt0(\d)$/) { $raid = 5 }
 # elsif ($node eq 'hedgehog')  { $raid = '-' }
 # elsif ($node eq 'jellyfish') { $raid = 'deg' }
@@ -534,10 +544,15 @@ sub prepare_html()
           "<tr><th colspan=\"9\">Files and directories with access date</th>",
           "</tr>\n";
 
-  foreach my $host (qw/ seven jellyfish seaurchin tigress sow
-                        dragen ewe galago lemur tapir senglar urvogel porcus
-                        aladdin snow-white minnie /)	# names of target hosts
+  foreach my $host (@nodes)
   {
+    if ($host =~ m/^au[0123]\d$/) { next }	# HA8000
+    elsif ($host =~ m/^pt0[1-9]$/) { next }	# DL360
+    elsif ($host eq 'griffith' or $host eq 'avery') { next }	# HA8000
+    elsif ($host eq 'chase') { next }	# DL360
+    elsif ($host eq 'hedgehog' or $host eq 'chipmunk') { next }	# MFB
+    elsif ($host eq 'blackbear' or $host eq 'kai') { next }	# GM
+
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
           "<td>$run{$host}</td><td>$last{$host}</td><td>$check{$host}</td></tr>\n";
