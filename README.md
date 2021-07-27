@@ -51,3 +51,19 @@ Coded by Kohji OKAMURA, Ph.D.
   WantedBy = multi-user.target
 ```
 ----
+
+## Options
+```
+  -c  Center host name or IP address (default: 127.0.0.1)
+  -h  Print usage
+  -l  Data path at center host (mandatory, e.g. /net/pollnodes)
+  -n  Names of files and directories are not printed
+  -o  Let this script know that it is the center host
+  -p  Port number for localhost
+  -q  Port number for scp to httpd
+  -r  Allow to execute rm
+  -s  Sleeping time in second
+  -t  Target of httpd, e.g. 'carol\@10.11.1.80:/var/www/html/pollnodes/'
+  -v  Print the version of this script
+```
+----
