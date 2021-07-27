@@ -131,6 +131,7 @@
   2020-09-23 ver. 3.5, au22 RAID 0 to 5
   2021-03-18 ver. 3.6, work even when SELinux Enforcing
   2021-03-29 ver. 3.7, simplified when a new host is added
+  2021-03-30 ver. 3.8, ping au33ib, instead of au33
 
 =cut
 
@@ -142,7 +143,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version =  3.7;	# version of this script 2021-03-29
+my $version =  3.8;	# version of this script 2021-03-30
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -302,6 +303,7 @@ sub prepare_html()
     else                                             { warn "Error 72: $node" }
 
     $ping = `ping -c 1 $node 2> /dev/null`;
+    if ($node eq 'au33') { $ping = `ping -c 1 au33ib 2> /dev/null` }
     if ($ping =~ m/ transmitted, 1 received, /m) { $operations{$node} = 1 }
     else                                         { $operations{$node} = 0 }
 
