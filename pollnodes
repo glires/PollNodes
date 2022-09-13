@@ -132,6 +132,8 @@
   2021-03-18 ver. 3.6, work even when SELinux Enforcing
   2021-03-29 ver. 3.7, simplified when a new host is added
   2021-03-30 ver. 3.8, ping au33ib, instead of au33
+  2021-11-09 ver. 3.9, change dragen to drache
+  2022-03-17 ver. 4.0, au20 RAID 0 to 5
 
 =cut
 
@@ -143,7 +145,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version =  3.8;	# version of this script 2021-03-30
+my $version =  4.0;	# version of this script 2022-03-17
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -162,7 +164,7 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  au06 au07 au08 au09 au10 au11 au12 au13 au14 au15 au16 au17
                  au18 au19 au20 au21 au22 au23 au24 au25 au26 au27 au28 au29
                  au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
-                 kai chipmunk dragen tapir senglar ewe galago lemur
+                 kai chipmunk drache tapir senglar ewe galago lemur
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
                  urvogel porcus aladdin snow-white
                  eel /;	# names of target hosts
@@ -229,6 +231,7 @@ elsif ($node =~ m/^au(\d\d)$/)
   if ($1 == 34)               { $raid = 6 }
   if ($1 == 17)               { $raid = 5 }
   if ($1 == 19)               { $raid = 5 }
+  if ($1 == 20)               { $raid = 5 }
   if ($1 == 22)               { $raid = 5 }
 }
 elsif ($node eq 'seaurchin')  { $raid = 5 }
@@ -241,7 +244,7 @@ elsif ($node eq 'chipmunk')   { $raid = 5 }
 elsif ($node eq 'galago')     { $raid = 5 }
 elsif ($node eq 'tapir')      { $raid = 5 }
 elsif ($node eq 'senglar')    { $raid = 5 }
-elsif ($node eq 'dragen')     { $raid = 0 }
+elsif ($node eq 'drache')     { $raid = 0 }
 elsif ($node eq 'urvogel')    { $raid = 1 }
 elsif ($node eq 'porcus')     { $raid = 1 }
 elsif ($node eq 'chase')      { $raid = 6 }
@@ -637,7 +640,7 @@ sub summary_node
     if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/\s/)
     { $storage = $1; $used = $2 }
     else { $storage = $used = 'NA' }
-    my $staging = `df -h | grep /staging`;      # only for dragen
+    my $staging = `df -h | grep /staging`;      # only for drache
     if ($staging =~ m/^\S+\s+(\S+)\s.+\s(\d+)\%\s+\/staging\s/)
     { $storage = $1; $used = $2 }
   }
@@ -720,7 +723,7 @@ sub summary_node
       m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
     { $files .= "$1 $2\n" }
   }
-  if ($node eq 'dragen')
+  if ($node eq 'drache')
   {
     my $ls =
       `ls -luF --time-style=full-iso /staging/ 2> /dev/null`;
