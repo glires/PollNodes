@@ -134,6 +134,11 @@
   2021-03-30 ver. 3.8, ping au33ib, instead of au33
   2021-11-09 ver. 3.9, change dragen to drache
   2022-03-17 ver. 4.0, au20 RAID 0 to 5
+  2022-11-08 ver. 4.1, prepare the new node array that ignore SHA-1
+  2023-03-30 ver. 4.2, ping au03ib, instead of au03
+  2023-07-11 ver. 4.3, ping through InfiniBand from au03
+  2023-07-28 ver. 4.4, add new hosts
+  2023-07-31 ver. 4.5, add new host, delete unused host
 
 =cut
 
@@ -145,7 +150,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version =  4.0;	# version of this script 2022-03-17
+my $version =  4.5;	# version of this script 2023-07-31
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -164,10 +169,11 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  au06 au07 au08 au09 au10 au11 au12 au13 au14 au15 au16 au17
                  au18 au19 au20 au21 au22 au23 au24 au25 au26 au27 au28 au29
                  au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
-                 kai chipmunk drache tapir senglar ewe galago lemur
+                 kai chipmunk sabatora chatora drache tapir ewe galago
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
                  urvogel porcus aladdin snow-white
                  eel /;	# names of target hosts
+my @new_nodes = qw / avery au03 au20 /;
 my ($node, $linux, $memory, $raid, $storage, $used, $run, $load, $last);
 my $files;
 my $scpport = '';
@@ -243,7 +249,6 @@ elsif ($node eq 'kai')        { $raid = 5 }
 elsif ($node eq 'chipmunk')   { $raid = 5 }
 elsif ($node eq 'galago')     { $raid = 5 }
 elsif ($node eq 'tapir')      { $raid = 5 }
-elsif ($node eq 'senglar')    { $raid = 5 }
 elsif ($node eq 'drache')     { $raid = 0 }
 elsif ($node eq 'urvogel')    { $raid = 1 }
 elsif ($node eq 'porcus')     { $raid = 1 }
@@ -286,7 +291,7 @@ exit;
 sub prepare_html()
 {
   my %operations;
-  my ($ping, $status, $percent, $datetime);
+  my ($ping, $status, $percent, $datetime, $ib);
 
   foreach my $node (@nodes)
   {
@@ -306,7 +311,12 @@ sub prepare_html()
     else                                             { warn "Error 72: $node" }
 
     $ping = `ping -c 1 $node 2> /dev/null`;
-    if ($node eq 'au33') { $ping = `ping -c 1 au33ib 2> /dev/null` }
+    undef $ib;
+    if    ($node eq 'griffith')    { $ib = 'au01ib' }
+    elsif ($node eq 'avery')       { $ib = 'au02ib' }
+    elsif ($node =~ m/^au(\d\d)$/) { $ib = $node . 'ib' }
+    if (defined $ib) { $ping = `ping -c 1 $ib 2> /dev/null` }
+
     if ($ping =~ m/ transmitted, 1 received, /m) { $operations{$node} = 1 }
     else                                         { $operations{$node} = 0 }
 
@@ -512,7 +522,7 @@ sub prepare_html()
           "<tr><th colspan=\"9\">Files and directories with access date</th>",
           "</tr>\n";
 
-  foreach my $host (qw/ hedgehog blackbear kai chipmunk /)
+  foreach my $host (qw/ hedgehog blackbear kai chipmunk sabatora chatora /)
   {
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -556,7 +566,7 @@ sub prepare_html()
     elsif ($host eq 'griffith' or $host eq 'avery') { next }	# HA8000
     elsif ($host eq 'chase') { next }	# DL360
     elsif ($host eq 'hedgehog' or $host eq 'chipmunk') { next }	# MFB
-    elsif ($host eq 'blackbear' or $host eq 'kai') { next }	# GM
+    elsif ($host eq 'blackbear' or $host eq 'kai' or $host eq 'sabatora' or $host eq 'chatora') { next }	# GM
 
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -768,4 +778,6 @@ sub summary_node
   close TSV;
   sleep $SLEEP2;
   `scp -p $opts{p} /var/pollnodes/pollnodes_${node}.tsv $opts{c}:$opts{l}/ 2> /dev/null`;
+  if (grep {$ARG eq $node} @new_nodes)
+  { `cp -p /var/pollnodes/pollnodes_${node}.tsv /net/au34ib/HUS4/var/pollnodes/` }
 }
