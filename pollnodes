@@ -139,6 +139,7 @@
   2023-07-11 ver. 4.3, ping through InfiniBand from au03
   2023-07-28 ver. 4.4, add new hosts
   2023-07-31 ver. 4.5, add new host, delete unused host
+  2023-12-24 ver. 4.6, add new host, process lepus:/var/data/
 
 =cut
 
@@ -150,7 +151,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version =  4.5;	# version of this script 2023-07-31
+my $version =  4.6;	# version of this script 2023-12-24
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -172,7 +173,7 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  kai chipmunk sabatora chatora drache tapir ewe galago
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
                  urvogel porcus aladdin snow-white
-                 eel /;	# names of target hosts
+                 eel lepus /;	# names of target hosts
 my @new_nodes = qw / avery au03 au20 /;
 my ($node, $linux, $memory, $raid, $storage, $used, $run, $load, $last);
 my $files;
@@ -254,6 +255,7 @@ elsif ($node eq 'urvogel')    { $raid = 1 }
 elsif ($node eq 'porcus')     { $raid = 1 }
 elsif ($node eq 'chase')      { $raid = 6 }
 elsif ($node eq 'aladdin')    { $raid = 5 }
+elsif ($node eq 'lepus')      { $raid = 5 }
 elsif ($node =~ m/^pt0(\d)$/) { $raid = 5 }
 # elsif ($node eq 'hedgehog')  { $raid = '-' }
 # elsif ($node eq 'jellyfish') { $raid = 'deg' }
@@ -283,6 +285,8 @@ for (my $i = 0; $i < $SLEEP3; $i++)
     &prepare_html();
     sleep $SLEEP2;
     if (defined $opts{t}) { `scp -p $scpport $opts{l}/index.html $opts{t}` }
+    if (int(rand() * 1000) % 4 == 3)
+    { `scp -p lepus:/var/pollnodes/pollnodes_lepus.tsv /net/au34ib/HUS4/var/pollnodes/` }
   }
 }
 exit;
@@ -522,7 +526,7 @@ sub prepare_html()
           "<tr><th colspan=\"9\">Files and directories with access date</th>",
           "</tr>\n";
 
-  foreach my $host (qw/ hedgehog blackbear kai chipmunk sabatora chatora /)
+  foreach my $host (qw/ hedgehog blackbear kai chipmunk sabatora chatora lepus /)
   {
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -549,7 +553,10 @@ sub prepare_html()
     }
     print HTML "</td></tr>\n\n";
   }
-  print HTML "</table>\n<br>\n\n";
+  print HTML "</table>\n";
+  print HTML "遺伝診療センターの lepus は研究所LANからアクセスできますが、病院棟に設置され基盤系LANのサーバセグメントに接続されています。<br>\n";
+  print HTML "lepus:/var/data/* および lepus:/home/*/* については4ヶ月以上放置されているディレクトリやファイルは自動的に削除されるので、忘れずにデータの移動をお願いします。<br>\n";
+  print HTML "<br>\n\n";
 
   print HTML "<br>\n<b><span class=\"big\">Other computers</span></b><br>\n";
   print HTML "<table>\n";
@@ -567,6 +574,7 @@ sub prepare_html()
     elsif ($host eq 'chase') { next }	# DL360
     elsif ($host eq 'hedgehog' or $host eq 'chipmunk') { next }	# MFB
     elsif ($host eq 'blackbear' or $host eq 'kai' or $host eq 'sabatora' or $host eq 'chatora') { next }	# GM
+    elsif ($host eq 'lepus') { next }	# CGM
 
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -675,6 +683,12 @@ sub summary_node
     if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/net/)
     { $storage = $1; $used = $2 }
   }
+  if ($node eq 'lepus')
+  {
+    $storage = `df -h | grep '% /var'`;
+    if ($storage =~ m/^\S*\s+(\d\S+)\s.+\s(\d+)\%\s+\/var/)
+    { $storage = $1; $used = $2 }
+  }
   $used .= '%';
 
   $run = `uptime`;
@@ -768,6 +782,14 @@ sub summary_node
       $files .= "$1 $2\n";
     }
   }
+  if ($node eq 'lepus')
+  {
+    my $ls =
+      `ls -luF --time-style=full-iso /var/data/ 2> /dev/null`;
+    while ($ls =~
+      m/ (20\d\d-\d\d-\d\d) [\d:\.]+ \+0900 ([^\n]+)\n/g)
+    { $files .= "$1 $2\n" }
+  }
 
   open TSV, "> /var/pollnodes/pollnodes_${node}.tsv"
                                         or die "$OS_ERROR: pollnodes error 68";
@@ -777,7 +799,8 @@ sub summary_node
   unless (defined $opts{n}) { print TSV "$files" }
   close TSV;
   sleep $SLEEP2;
-  `scp -p $opts{p} /var/pollnodes/pollnodes_${node}.tsv $opts{c}:$opts{l}/ 2> /dev/null`;
+  if ($node ne 'lepus')
+  { `scp -p $opts{p} /var/pollnodes/pollnodes_${node}.tsv $opts{c}:$opts{l}/ 2> /dev/null` }
   if (grep {$ARG eq $node} @new_nodes)
   { `cp -p /var/pollnodes/pollnodes_${node}.tsv /net/au34ib/HUS4/var/pollnodes/` }
 }
