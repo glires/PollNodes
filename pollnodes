@@ -140,6 +140,7 @@
   2023-07-28 ver. 4.4, add new hosts
   2023-07-31 ver. 4.5, add new host, delete unused host
   2023-12-24 ver. 4.6, add new host, process lepus:/var/data/
+  2023-12-30 ver. 4.7, add new host
 
 =cut
 
@@ -151,7 +152,7 @@ use Getopt::Std;
 use Time::Local;
 use List::Util qw/max/;
 
-my $version =  4.6;	# version of this script 2023-12-24
+my $version =  4.7;	# version of this script 2023-12-30
 my $SLEEP0 =   256;	# initail
 my $SLEEP1 =   128;	# interval
 my $SLEEP2 =     4;	# before scp
@@ -170,7 +171,7 @@ my @nodes = qw / seven jellyfish tigress sow griffith avery au03 au04 au05
                  au06 au07 au08 au09 au10 au11 au12 au13 au14 au15 au16 au17
                  au18 au19 au20 au21 au22 au23 au24 au25 au26 au27 au28 au29
                  au30 au31 au32 au33 au34 au35 hedgehog seaurchin blackbear
-                 kai chipmunk sabatora chatora drache tapir ewe galago
+                 kai chipmunk sabatora kijitora chatora drache tapir ewe galago
                  pt01 pt02 pt03 pt04 pt05 pt06 pt07 pt08 pt09 chase
                  urvogel porcus aladdin snow-white
                  eel lepus /;	# names of target hosts
@@ -211,6 +212,7 @@ elsif ($linux eq "Red Hat Enterprise Linux Server release 7.5 (Maipo)\n")
 { $linux = 'RHEL 7.5' }
 elsif ($linux =~ m/^(CentOS ).+ (\d+\.\d+)[\. ]/) { $linux = "$1$2" }
 elsif ($linux =~ m/^(Fedora )release (\d+) /) { $linux = "$1$2" }
+elsif ($linux =~ m/^(Rocky ).+release ([\d\.]+) /) { $linux = "$1$2" }
 elsif ($linux eq '')
 {
   $linux = `cat /etc/lsb-release 2> /dev/null`;
@@ -526,7 +528,7 @@ sub prepare_html()
           "<tr><th colspan=\"9\">Files and directories with access date</th>",
           "</tr>\n";
 
-  foreach my $host (qw/ hedgehog blackbear kai chipmunk sabatora chatora lepus /)
+  foreach my $host (qw/ hedgehog blackbear kai chipmunk sabatora kijitora chatora lepus /)
   {
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
           "<td>$raid{$host}</td><td>$storage{$host}</td><td>$used{$host}</td><td>$load{$host}</td>",
@@ -573,7 +575,7 @@ sub prepare_html()
     elsif ($host eq 'griffith' or $host eq 'avery') { next }	# HA8000
     elsif ($host eq 'chase') { next }	# DL360
     elsif ($host eq 'hedgehog' or $host eq 'chipmunk') { next }	# MFB
-    elsif ($host eq 'blackbear' or $host eq 'kai' or $host eq 'sabatora' or $host eq 'chatora') { next }	# GM
+    elsif ($host eq 'blackbear' or $host eq 'kai' or $host eq 'sabatora' or $host eq 'kijitora' or $host eq 'chatora') { next }	# GM
     elsif ($host eq 'lepus') { next }	# CGM
 
     print HTML "<tr><td rowspan=\"2\">$alias{$host}</td><td>$linux{$host}</td><td>$memory{$host}</td>",
